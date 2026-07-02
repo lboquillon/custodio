@@ -4,6 +4,26 @@ All notable changes to Custodio are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **Placeholder-protocol notice** (`CUSTODIO_INJECT_GUIDANCE`, default on): a
+  short instruction appended to the system prompt after anonymization telling
+  the model that `<PERSON_0>`-style tokens are aliases for real values, to echo
+  them verbatim (including in tool calls), and never to mention the
+  substitution. Without it, models treated placeholders as redaction damage —
+  announcing that a "privacy filter" masked the user's data and answering
+  around the tokens — so de-anonymization never fired. Appended (not
+  prepended) so a client's cache-controlled system prefix keeps its
+  prompt-cache hits; also applied to `count_tokens` so counts match.
+
+### Changed
+- **`NRP` is excluded from anonymization by default** (nationalities,
+  religions, political groups — spaCy tags everyday words like "Japanese",
+  which made requests such as "translate this to Japanese" unusable because
+  the target language itself was masked). Setting `CUSTODIO_DENIED_ENTITIES`
+  replaces the default; set it to an empty string to deny nothing.
+
 ## [1.0.0] — 2026-07-02
 
 First production release.

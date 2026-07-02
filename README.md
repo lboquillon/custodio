@@ -206,7 +206,9 @@ are optional; defaults are shown.
 | `CUSTODIO_SPACY_MODEL` | `en_core_web_lg` | spaCy model (`en_core_web_sm` = smaller, `en_core_web_trf` = highest accuracy) |
 | `CUSTODIO_SCORE_THRESHOLD` | `0.5` | Minimum confidence to anonymize |
 | `CUSTODIO_SHADOW_THRESHOLD` | `0.3` | Lower bound for "possible miss" reporting |
-| `CUSTODIO_ALLOWED_ENTITIES` / `CUSTODIO_DENIED_ENTITIES` | all / none | Restrict or exclude entity types |
+| `CUSTODIO_ALLOWED_ENTITIES` | all | Restrict anonymization to these entity types |
+| `CUSTODIO_DENIED_ENTITIES` | `NRP` | Entity types never anonymized. `NRP` (nationalities, religions, languages — e.g. the word "Japanese") is excluded by default because masking it breaks ordinary requests. Setting this replaces the default; set it empty to deny nothing |
+| `CUSTODIO_INJECT_GUIDANCE` | `true` | Append a short system-prompt notice telling the model to treat placeholders as the real values and echo them verbatim (without it, models tend to refuse to use the placeholders and tell the user their data was "masked by a filter") |
 | `CUSTODIO_ANONYMIZE_SYSTEM` | `true` | Anonymize the system prompt |
 | `CUSTODIO_ANONYMIZE_TOOL_INPUTS` | `true` | Anonymize tool inputs and tool results |
 | `CUSTODIO_ANONYMIZE_TOOL_DEFS` | `false` | Anonymize tool descriptions/schemas (can break tools) |
@@ -322,10 +324,12 @@ custodio/
   |  2. Detect PII (spaCy NER + regex/checksums).                 |
   |  3. Replace each value with a stable placeholder (<PERSON_0>) |
   |     and record a per-request mapping.                         |
-  |  4. Record an audit event (what was hidden, what might be     |
+  |  4. Append a system-prompt notice telling the model to treat  |
+  |     placeholders as the real values and echo them verbatim.   |
+  |  5. Record an audit event (what was hidden, what might be     |
   |     missed) and push it to the live dashboard.               |
   |  ------------------  forward to api.anthropic.com  ---------- |
-  |  5. Put the real values back in the response — inline for     |
+  |  6. Put the real values back in the response — inline for     |
   |     JSON, and with a placeholder-safe buffer for streaming.   |
   +---------------------------------------------------------------+
         v
@@ -343,8 +347,14 @@ session state, no PII retained between requests. Full rationale in
 - **Detection is recall-limited.** Some PII can pass through. The "possible
   misses" pass and the anonymized-payload preview help you see this, but nothing
   guarantees complete coverage. Custodio reduces exposure; it is not a guarantee.
-- **The model must echo placeholders verbatim** for restoration to fire. LLMs do
-  this reliably, but a rewritten placeholder won't be restored.
+- **The model must echo placeholders verbatim** for restoration to fire. The
+  injected system-prompt notice (`CUSTODIO_INJECT_GUIDANCE`, on by default)
+  instructs it to do exactly that; a placeholder the model still rewrites won't
+  be restored.
+- **Some entity types are too broad to mask by default.** `NRP` (nationalities,
+  religions, languages) is excluded out of the box; `DATE_TIME` is masked by
+  default because birthdates are PII, but it also catches ordinary dates and
+  digit runs — add it to `CUSTODIO_DENIED_ENTITIES` if that gets in your way.
 - **Opaque placeholders** (`<PERSON_0>`) are used because they round-trip more
   reliably than fake-name surrogates.
 

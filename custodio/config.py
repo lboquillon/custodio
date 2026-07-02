@@ -22,6 +22,15 @@ def _env_list(name: str) -> list[str] | None:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+# Entity types excluded from anonymization unless the user opts back in.
+# NRP (nationality / religious / political group) matches everyday words like
+# "Japanese" or "Catholic" that are usually the *subject* of a request, not
+# someone's identity — masking them cripples ordinary tasks (e.g. "translate
+# this to Japanese") for almost no privacy gain. Re-enable with
+# CUSTODIO_DENIED_ENTITIES="" (empty = deny nothing).
+DEFAULT_DENIED_ENTITIES = ["NRP"]
+
+
 @dataclass
 class Settings:
     """All knobs for the proxy. Instantiate via :meth:`from_env`."""
@@ -44,14 +53,24 @@ class Settings:
     shadow_threshold: float = 0.3
     # If set, only these entity types are anonymized. None = all supported.
     allowed_entities: list[str] | None = None
-    # Entity types to never anonymize (wins over allowed_entities).
-    denied_entities: list[str] = field(default_factory=list)
+    # Entity types to never anonymize (wins over allowed_entities). Defaults to
+    # DEFAULT_DENIED_ENTITIES; setting CUSTODIO_DENIED_ENTITIES replaces the
+    # default entirely (set it to an empty string to deny nothing).
+    denied_entities: list[str] = field(
+        default_factory=lambda: list(DEFAULT_DENIED_ENTITIES)
+    )
 
     # What to walk in the payload
     anonymize_system: bool = True
     anonymize_tool_inputs: bool = True   # tool_use.input + tool_result content
     anonymize_tool_defs: bool = False    # tools[] schemas — off: breaks tools
     anonymize_metadata: bool = True      # metadata.user_id (often an email/username)
+    # Append a short system-prompt notice telling the model what the
+    # placeholder tokens are and to echo them verbatim. Without it the model
+    # tends to treat placeholders as redaction damage: it comments on the
+    # "privacy filter" instead of using the tokens, and de-anonymization never
+    # fires. Injected after anonymization, so the notice itself is never scanned.
+    inject_guidance: bool = True
 
     # Reject requests whose body exceeds this many bytes (0 = no limit). Guards
     # against a single huge payload monopolizing CPU/memory.
@@ -91,11 +110,16 @@ class Settings:
             score_threshold=float(os.getenv("CUSTODIO_SCORE_THRESHOLD", "0.5")),
             shadow_threshold=float(os.getenv("CUSTODIO_SHADOW_THRESHOLD", "0.3")),
             allowed_entities=_env_list("CUSTODIO_ALLOWED_ENTITIES"),
-            denied_entities=_env_list("CUSTODIO_DENIED_ENTITIES") or [],
+            denied_entities=(
+                list(DEFAULT_DENIED_ENTITIES)
+                if os.getenv("CUSTODIO_DENIED_ENTITIES") is None
+                else (_env_list("CUSTODIO_DENIED_ENTITIES") or [])
+            ),
             anonymize_system=_env_bool("CUSTODIO_ANONYMIZE_SYSTEM", True),
             anonymize_tool_inputs=_env_bool("CUSTODIO_ANONYMIZE_TOOL_INPUTS", True),
             anonymize_tool_defs=_env_bool("CUSTODIO_ANONYMIZE_TOOL_DEFS", False),
             anonymize_metadata=_env_bool("CUSTODIO_ANONYMIZE_METADATA", True),
+            inject_guidance=_env_bool("CUSTODIO_INJECT_GUIDANCE", True),
             max_body_bytes=int(os.getenv("CUSTODIO_MAX_BODY_BYTES", str(25 * 1024 * 1024))),
             audit_capacity=int(os.getenv("CUSTODIO_AUDIT_CAPACITY", "500")),
             store_full_pii=_env_bool("CUSTODIO_STORE_FULL_PII", False),

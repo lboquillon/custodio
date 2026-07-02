@@ -28,7 +28,7 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-from .anthropic_payload import anonymize_request, deanonymize_response
+from .anthropic_payload import anonymize_request, deanonymize_response, inject_guidance
 from .audit import (
     AuditEvent,
     EventBus,
@@ -396,6 +396,11 @@ async def _handle_anonymized(
         return new_text, hits
 
     hits = await asyncio.to_thread(anonymize_request, payload, anon, settings)
+    # Tell the model how to handle the placeholders (echo verbatim, no meta
+    # commentary). After anonymization, so the notice text is never scanned;
+    # also on count_tokens, so counts match what /v1/messages really sends.
+    if settings.inject_guidance:
+        inject_guidance(payload)
     new_body = json.dumps(payload).encode("utf-8")
     reverse_map = build_reverse_map(entity_mapping)
 

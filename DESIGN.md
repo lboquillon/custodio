@@ -29,7 +29,8 @@ wasn't* on every request.
   │  3. InstanceCounter anonymizer → replace each PII value with │
   │     a stable placeholder <PERSON_0>, <EMAIL_ADDRESS_1>, …    │
   │     building a per-request `entity_mapping`                   │
-  │  4. re-inject placeholders into the payload                  │
+  │  4. re-inject placeholders into the payload; append a system │
+  │     notice telling the model to echo placeholders verbatim   │
   │  5. record an AUDIT event (entities, scores, preview,        │
   │     "possible misses" from a shadow low-threshold pass)      │
   │                                                              │
@@ -105,7 +106,7 @@ also the safest possible design for a privacy tool.
 
 ---
 
-## The three hard parts
+## The four hard parts
 
 ### 1. Knowing which fields to touch
 An Anthropic request is a nested structure. We must anonymize the
@@ -138,7 +139,33 @@ runs on the real path. The result comes back in the next request's
 safe: *de-anonymize everything on the way in to the client, re-anonymize
 everything on the way out.*
 
-### 3. Streaming (Claude Code always streams)
+### 3. Making the model cooperate
+Substitution alone is not enough: a model that sees `<PERSON_0>` with no
+explanation treats it as redaction damage — it tells the user "a privacy filter
+masked your details", refuses to use the tokens, and answers around them with
+fill-in-the-blank templates. De-anonymization then never fires and the
+transparency collapses. So after anonymizing, Custodio appends a short notice
+to the system prompt (`PLACEHOLDER_GUIDANCE` in `anthropic_payload.py`,
+`CUSTODIO_INJECT_GUIDANCE` to disable): placeholders are aliases for real
+values, treat them as the real thing, echo them verbatim everywhere (prose,
+code, tool calls), and never mention the substitution. Details that matter:
+
+- **Injected after anonymization**, so the notice itself is never scanned and
+  its example tokens can't perturb detection.
+- **Appended, not prepended**, so a client's cache-controlled system prefix
+  (Claude Code marks its system blocks with `cache_control`) stays
+  byte-identical and prompt-cache hits survive.
+- Also injected on `count_tokens`, so token counts match what `/v1/messages`
+  actually sends.
+
+Relatedly, the default entity set matters as much as the prompt: spaCy's `NRP`
+type (nationalities, religions, political groups) matches everyday words like
+"Japanese" that are usually the *subject* of a request rather than anyone's
+identity — masking them makes tasks like "translate this to Japanese"
+impossible. `NRP` is therefore in `DEFAULT_DENIED_ENTITIES` (opt back in with
+an empty `CUSTODIO_DENIED_ENTITIES`).
+
+### 4. Streaming (Claude Code always streams)
 The response is an SSE stream of `content_block_delta` events. A placeholder
 like `<PERSON_0>` can be **split across two `text_delta` chunks** (`<PER` …
 `SON_0>`). `streaming.py` keeps a per-content-block buffer and only flushes text
@@ -188,9 +215,9 @@ response.
   through. The shadow pass and the anonymized-payload preview help you *see*
   this, but nothing guarantees 100% coverage.
 - **The model must echo placeholders verbatim** for de-anonymization to fire.
-  LLMs are very good at this, but if the model paraphrases `<PERSON_0>` into
-  something else, that instance won't be restored (it'll just show the
-  placeholder).
+  The injected guidance (hard part 3) makes this reliable, but if the model
+  still paraphrases `<PERSON_0>` into something else, that instance won't be
+  restored (it'll just show the placeholder).
 - **Opaque placeholders vs. fake surrogates.** Custodio uses opaque
   `<PERSON_0>` tokens because they round-trip most reliably. Faker-style fake
   names read more naturally but the model may inflect them, breaking the

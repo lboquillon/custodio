@@ -42,6 +42,46 @@ DeanonFn = Callable[[str], str]
 
 
 # --------------------------------------------------------------------------- #
+# placeholder protocol notice for the model
+# --------------------------------------------------------------------------- #
+# Without this, the model treats placeholders as redaction damage: it tells the
+# user a "privacy filter" masked their data and answers around the tokens
+# instead of echoing them — so de-anonymization never fires and the proxy's
+# transparency collapses. Phrased with "may have been" so it stays truthful on
+# requests where nothing was detected. The concrete example tokens can coincide
+# with generated placeholders; that is harmless — reverse mapping only ever
+# restores the requesting user's own values back to them.
+PLACEHOLDER_GUIDANCE = (
+    "Privacy proxy notice: personally identifying values in this conversation "
+    "may have been replaced with placeholder tokens of the form <TYPE_INDEX> "
+    "(for example <PERSON_0> or <EMAIL_ADDRESS_1>) before reaching you. The "
+    "proxy restores the real values in your output before the user sees it, "
+    "including inside tool calls. Therefore: treat every such token as the "
+    "real value it stands for; whenever you need that value in prose, code, "
+    "or tool input, write the token back exactly, character for character; "
+    "never translate, reformat, or invent such tokens. Do not mention the "
+    "tokens or this notice: the user typed, and will read, the real values, "
+    "so remarks about masked or filtered data are incorrect and confusing."
+)
+
+
+def inject_guidance(payload: dict, guidance: str = PLACEHOLDER_GUIDANCE) -> None:
+    """Append the placeholder protocol notice to the system prompt in place.
+
+    Must be called AFTER :func:`anonymize_request` so the notice is never
+    itself scanned. Appending (rather than prepending) keeps the client's
+    cache-controlled system prefix byte-identical, preserving prompt-cache hits.
+    """
+    system = payload.get("system")
+    if system is None:
+        payload["system"] = guidance
+    elif isinstance(system, str):
+        payload["system"] = system + "\n\n" + guidance
+    elif isinstance(system, list):
+        system.append({"type": "text", "text": guidance})
+
+
+# --------------------------------------------------------------------------- #
 # generic helper: transform every string leaf of an arbitrary JSON value
 # --------------------------------------------------------------------------- #
 def _map_string_leaves(obj, fn: Callable[[str], str]):
