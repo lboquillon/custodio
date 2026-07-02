@@ -29,16 +29,20 @@ jobs:
 
       # Tests exercise the full pipeline with a mock upstream and fakeredis, so
       # they need no spaCy model or network. [dev] pulls ruff, pytest, redis, etc.
+      # uv >= 0.8 marks its managed interpreters as externally managed, so
+      # install into a project venv rather than --system.
       - name: Install
-        run: uv pip install --system -e ".[dev]"
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
 
-      # Invoke through the interpreter / uvx to avoid PATH assumptions about
-      # where console scripts landed under the setup-uv interpreter.
+      # Invoke through the venv interpreter / uvx to avoid PATH assumptions
+      # about where console scripts landed.
       - name: Lint
         run: uvx ruff check custodio tests
 
       - name: Test
-        run: python -m pytest -q
+        run: .venv/bin/python -m pytest -q
 
   docker-build:
     # Smoke-check that the production image builds (no push).
