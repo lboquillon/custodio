@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.venv/
+.venv-full/
+.python-version.local
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local config & data
+.env
+*.jsonl
+
+# Build output
+/dist/
+
+# Vendored upstream (studied locally, not part of this project — installed from PyPI)
+/presidio/
+
+# OS
+.DS_Store

@@ -1,0 +1,47 @@
+# Copyright (c) 2026 Leonardo Boquillon
+# SPDX-License-Identifier: MIT
+services:
+  custodio:
+    build:
+      context: .
+      args:
+        # Use en_core_web_sm for a lean, fast image; en_core_web_lg for recall.
+        SPACY_MODEL: ${CUSTODIO_SPACY_MODEL:-en_core_web_lg}
+    image: custodio:latest
+    ports:
+      # Published on localhost only by default (the audit dashboard is sensitive).
+      # To expose on all interfaces, set CUSTODIO_BIND=0.0.0.0 (and set an
+      # CUSTODIO_AUDIT_TOKEN). Point your client at http://localhost:3000.
+      - "${CUSTODIO_BIND:-127.0.0.1}:${CUSTODIO_PORT:-3000}:3000"
+    environment:
+      CUSTODIO_ENGINE: ${CUSTODIO_ENGINE:-presidio}
+      CUSTODIO_UPSTREAM: ${CUSTODIO_UPSTREAM:-https://api.anthropic.com}
+      CUSTODIO_SCORE_THRESHOLD: ${CUSTODIO_SCORE_THRESHOLD:-0.5}
+      CUSTODIO_STORE_FULL_PII: ${CUSTODIO_STORE_FULL_PII:-false}
+      # Persist the audit trail and drive the live dashboard through Redis.
+      CUSTODIO_REDIS_URL: ${CUSTODIO_REDIS_URL:-redis://redis:6379/0}
+      # Optional: require a token for the dashboard/audit endpoints.
+      CUSTODIO_AUDIT_TOKEN: ${CUSTODIO_AUDIT_TOKEN:-}
+      # CUSTODIO_ALLOWED_ENTITIES, CUSTODIO_AUDIT_JSONL, etc. — see .env.sample
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - custodio-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  custodio-redis:

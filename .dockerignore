@@ -1,0 +1,15 @@
+.git
+.venv
+.venv-full
+presidio
+__pycache__
+**/__pycache__
+*.pyc
+.env
+*.jsonl
+.pytest_cache
+.ruff_cache
+.github
+tests
+docs
+dist

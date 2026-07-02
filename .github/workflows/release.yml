@@ -1,0 +1,110 @@
+# Copyright (c) 2026 Leonardo Boquillon
+# SPDX-License-Identifier: MIT
+#
+# Runs when you push a version tag, e.g.:
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# It (1) builds and pushes a Docker image to the GitHub Container Registry,
+# (2) optionally publishes to PyPI, and (3) creates a GitHub Release.
+#
+# ONE-TIME SETUP:
+#   - GHCR: after the first push, open the package on GitHub -> Package settings
+#     -> change visibility to Public so anyone can `docker run` it without login.
+#   - PyPI (optional): create the `custodio` project with a trusted publisher for
+#     this repo (workflow `release.yml`, environment `pypi`), then set the repo
+#     variable PUBLISH_TO_PYPI=true to enable the pypi job below.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write   # create the GitHub Release
+  packages: write   # push to GHCR
+
+jobs:
+  # Guard: the git tag must match the version in pyproject.toml.
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches pyproject version
+        run: |
+          pv=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          tag="${GITHUB_REF_NAME#v}"
+          echo "pyproject=$pv tag=$tag"
+          [ "$pv" = "$tag" ] || { echo "::error::tag v$tag != pyproject $pv"; exit 1; }
+
+  docker:
+    needs: check-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built for linux/amd64 only: the image bakes the full spaCy model, and an
+      # emulated arm64 build under QEMU is slow/unreliable. Apple-silicon users
+      # can build natively with `docker compose up --build`.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  pypi:
+    needs: check-version
+    # Opt-in: set repo variable PUBLISH_TO_PYPI=true once the PyPI trusted
+    # publisher is configured, or this job is skipped (release still succeeds).
+    if: vars.PUBLISH_TO_PYPI == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # PyPI trusted publishing (OIDC), no API token needed
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: [docker]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            Docker image (linux/amd64):
+            `docker run --pull=always -p 127.0.0.1:3000:3000 ghcr.io/${{ github.repository }}:latest`
+
+            See CHANGELOG.md for details.

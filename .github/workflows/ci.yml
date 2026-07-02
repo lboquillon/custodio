@@ -1,0 +1,56 @@
+# Copyright (c) 2026 Leonardo Boquillon
+# SPDX-License-Identifier: MIT
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Tests exercise the full pipeline with a mock upstream and fakeredis, so
+      # they need no spaCy model or network. [dev] pulls ruff, pytest, redis, etc.
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+
+      # Invoke through the interpreter / uvx to avoid PATH assumptions about
+      # where console scripts landed under the setup-uv interpreter.
+      - name: Lint
+        run: uvx ruff check custodio tests
+
+      - name: Test
+        run: python -m pytest -q
+
+  docker-build:
+    # Smoke-check that the production image builds (no push).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (small model to keep CI fast)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          build-args: SPACY_MODEL=en_core_web_sm
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
